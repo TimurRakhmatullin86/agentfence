@@ -1,0 +1,60 @@
+apiVersion: agentfence/v1
+kind: Policy
+metadata:
+  name: coding-agent-policy
+  description: Governance policy for AI coding assistant
+  owner: engineering-team
+  labels:
+    environment: development
+    team: engineering
+spec:
+  agent:
+    name: coding-agent
+    role: developer
+  rules:
+    # Allow code operations
+    - action: "file.read"
+      effect: allow
+      reason: "Reading files is always allowed"
+
+    - action: "file.write"
+      effect: allow
+      reason: "Writing files is allowed in dev environment"
+
+    - action: "git.commit"
+      effect: allow
+      reason: "Commits are allowed"
+
+    # Push requires approval
+    - action: "git.push"
+      effect: require_approval
+      approval:
+        approver: tech-lead
+        timeout_secs: 600
+      reason: "Pushing to remote requires tech lead approval"
+
+    # Force push is denied
+    - action: "git.force_push"
+      effect: deny
+      reason: "Force push is never allowed"
+
+    # Block dangerous operations
+    - action: "shell.rm_rf"
+      effect: deny
+      reason: "Recursive delete is prohibited"
+
+    - action: "shell.sudo"
+      effect: deny
+      reason: "Sudo commands are not allowed"
+
+    - action: "network.external"
+      effect: require_approval
+      approval:
+        approver: security-team
+        timeout_secs: 120
+      reason: "External network access requires security review"
+
+  budget:
+    max_per_session: 20.00
+    max_per_day: 200.00
+    alert_at_percent: 90

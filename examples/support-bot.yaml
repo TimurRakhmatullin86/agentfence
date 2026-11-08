@@ -1,0 +1,75 @@
+apiVersion: agentfence/v1
+kind: Policy
+metadata:
+  name: support-bot-policy
+  description: Governance policy for customer support AI agent
+  owner: platform-team
+  labels:
+    environment: production
+    team: customer-success
+spec:
+  agent:
+    name: support-bot
+    role: customer-support
+  rules:
+    # Allow read-only operations
+    - action: "search.*"
+      effect: allow
+      reason: "Search operations are always allowed"
+
+    - action: get_order
+      effect: allow
+      reason: "Reading order details is allowed"
+
+    - action: check_status
+      effect: allow
+      reason: "Status checks are allowed"
+
+    # Refunds under $500 need manager approval
+    - action: refund
+      effect: require_approval
+      conditions:
+        - type: amount_max
+          field: amount
+          max: 500
+      approval:
+        approver: manager
+        timeout_secs: 300
+        on_timeout: deny
+      reason: "Refunds up to $500 require manager approval"
+
+    # Refunds over $500 are denied
+    - action: refund
+      effect: deny
+      reason: "Refunds over $500 are not allowed for this agent"
+
+    # Block destructive operations
+    - action: delete_user
+      effect: deny
+      reason: "Agent cannot delete user accounts"
+
+    - action: database_write
+      effect: deny
+      reason: "Direct database writes are prohibited"
+
+    - action: "admin.*"
+      effect: deny
+      reason: "Admin operations are blocked"
+
+  budget:
+    max_per_session: 5.00
+    max_per_day: 100.00
+    max_per_month: 2000.00
+    alert_at_percent: 80
+    currency: USD
+
+  data_access:
+    pii: mask
+    allowed_tables:
+      - orders
+      - products
+      - faq
+    denied_tables:
+      - users_private
+      - payments_raw
+      - internal_notes
