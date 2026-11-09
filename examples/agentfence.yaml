@@ -1,0 +1,28 @@
+# agentfence proxy config
+# Place this as agentfence.yaml in your project root
+
+# Path to policy file or directory
+policy: .agentfence
+
+# Agent name for policy matching
+default_agent: my-agent
+
+# Audit log file (optional)
+log_file: agentfence-audit.jsonl
+
+# Downstream MCP servers to proxy
+servers:
+  - name: filesystem
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp/workspace"]
+
+  # Add more servers:
+  # - name: github
+  #   command: npx
+  #   args: ["-y", "@modelcontextprotocol/server-github"]
+  #   env:
+  #     GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_..."
+  #
+  # - name: postgres
+  #   command: npx
+  #   args: ["-y", "@modelcontextprotocol/server-postgres", "postgresql://localhost/mydb"]

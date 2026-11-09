@@ -145,6 +145,18 @@ agentfence check -a support-bot -A refund -P amount=200 --json
 
 Show a summary of all loaded policies.
 
+### `agentfence serve [-c config]`
+
+Run as MCP proxy server (stdio transport). Reads `agentfence.yaml` by default.
+
+```bash
+# Start proxy with default config
+agentfence serve
+
+# Start with custom config
+agentfence serve -c my-config.yaml
+```
+
 ## Features
 
 | Feature | agentfence | NeMo | Guardrails AI | FailproofAI | permit0 |
@@ -158,6 +170,7 @@ Show a summary of all loaded policies.
 | Prompt safety | no | **yes** | partial | no | no |
 | Output validation | no | partial | **yes** | no | no |
 | Data access control | **yes** | no | no | partial | no |
+| MCP proxy mode | **yes** | no | no | no | no |
 
 ## How It Works
 
@@ -166,6 +179,61 @@ Show a summary of all loaded policies.
 3. **Three outcomes**: `ALLOW` (proceed), `DENY` (block), `REQUIRE_APPROVAL` (escalate)
 4. **Exit codes** enable CI/CD integration (0, 1, 2)
 5. **JSON output** for programmatic integration with agent frameworks
+
+## MCP Proxy Mode
+
+agentfence can run as an MCP server that sits between Claude (or any MCP client) and your tool servers. Every tool call passes through the policy engine before reaching the downstream server.
+
+```
+Claude/Cursor ←→ agentfence (MCP proxy) ←→ MCP tool servers
+```
+
+### Setup
+
+1. Create a proxy config:
+
+```yaml
+# agentfence.yaml
+policy: .agentfence
+default_agent: support-bot
+log_file: agentfence-audit.jsonl
+
+servers:
+  - name: filesystem
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp/workspace"]
+
+  - name: github
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_..."
+```
+
+2. Add to Claude Desktop (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "agentfence": {
+      "command": "agentfence",
+      "args": ["serve", "-c", "/path/to/agentfence.yaml"]
+    }
+  }
+}
+```
+
+3. Claude now sees all downstream tools, but every call is policy-checked:
+   - **ALLOW** → proxied to downstream server
+   - **DENY** → blocked, agent sees error with reason
+   - **REQUIRE_APPROVAL** → blocked, agent sees approval requirement
+
+### Built-in Meta-tool
+
+The proxy exposes `agentfence_status` — agents can check their governance status:
+- Loaded policies count
+- Connected downstream servers
+- Total proxied tools
 
 ## CI/CD Integration
 
@@ -188,7 +256,7 @@ esac
 
 ## Roadmap
 
-- [ ] MCP server mode (middleware between agent and tools)
+- [x] MCP server mode (middleware between agent and tools)
 - [ ] Rate limiting enforcement
 - [ ] Persistent audit log (SQLite)
 - [ ] Real-time budget tracking across sessions

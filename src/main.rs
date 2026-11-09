@@ -1,4 +1,7 @@
 mod engine;
+mod mcp_server;
+mod mcp_types;
+mod proxy_config;
 mod types;
 
 use clap::{Parser, Subcommand};
@@ -59,6 +62,12 @@ enum Commands {
         #[arg(default_value = ".agentfence")]
         path: PathBuf,
     },
+    /// Run as MCP proxy server (stdio transport)
+    Serve {
+        /// Proxy config file
+        #[arg(short, long, default_value = "agentfence.yaml")]
+        config: PathBuf,
+    },
 }
 
 fn parse_param(s: &str) -> Result<(String, serde_json::Value), String> {
@@ -101,7 +110,8 @@ fn load_engine(path: &PathBuf) -> Result<PolicyEngine, EngineError> {
     Ok(engine)
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
@@ -116,6 +126,7 @@ fn main() {
             json,
         } => cmd_check(&policy, &agent, &action, cost, param, json),
         Commands::List { path } => cmd_list(&path),
+        Commands::Serve { config } => cmd_serve(&config).await,
     }
 }
 
@@ -247,6 +258,37 @@ fn cmd_check(
         Effect::Allow => std::process::exit(0),
         Effect::Deny => std::process::exit(1),
         Effect::RequireApproval => std::process::exit(2),
+    }
+}
+
+async fn cmd_serve(config_path: &PathBuf) {
+    let config = match proxy_config::ProxyConfig::load(config_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{} failed to load config: {}", "error:".red(), e);
+            std::process::exit(1);
+        }
+    };
+
+    let engine = match load_engine(&config.policy) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("{} failed to load policies: {}", "error:".red(), e);
+            std::process::exit(1);
+        }
+    };
+
+    eprintln!(
+        "{} agentfence MCP proxy starting ({} policies, {} downstream servers)",
+        "info:".cyan(),
+        engine.policies().len(),
+        config.servers.len()
+    );
+
+    let server = mcp_server::McpProxyServer::new(engine, config);
+    if let Err(e) = server.run().await {
+        eprintln!("{} server error: {}", "error:".red(), e);
+        std::process::exit(1);
     }
 }
 

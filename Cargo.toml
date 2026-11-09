@@ -22,3 +22,5 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 glob = "0.3"
 colored = "2.0"
 sha2 = "0.10"
+tokio = { version = "1.0", features = ["full"] }
+tokio-process = "0.2"
