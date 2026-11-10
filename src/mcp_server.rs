@@ -6,9 +6,16 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::io::Write as IoWrite;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader};
 use tokio::process::{Child as TokioChild, Command as TokioCommand};
 use tokio::sync::Mutex;
+
+static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(100);
+
+fn next_id() -> u64 {
+    NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
+}
 
 pub struct McpProxyServer {
     engine: PolicyEngine,
@@ -379,7 +386,7 @@ async fn proxy_tool_call(
 ) -> Result<Value, Box<dyn std::error::Error>> {
     let req = serde_json::json!({
         "jsonrpc": "2.0",
-        "id": 99,
+        "id": next_id(),
         "method": "tools/call",
         "params": {
             "name": params.name,

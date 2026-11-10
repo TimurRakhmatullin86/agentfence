@@ -2,6 +2,7 @@ mod engine;
 mod mcp_server;
 mod mcp_types;
 mod proxy_config;
+mod sql_checker;
 mod types;
 
 use clap::{Parser, Subcommand};

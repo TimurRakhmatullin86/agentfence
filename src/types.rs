@@ -34,11 +34,14 @@ pub struct PolicyMetadata {
 pub struct PolicySpec {
     #[serde(default)]
     pub agent: Option<AgentSelector>,
+    #[serde(default)]
     pub rules: Vec<Rule>,
     #[serde(default)]
     pub budget: Option<BudgetPolicy>,
     #[serde(default)]
     pub data_access: Option<DataAccessPolicy>,
+    #[serde(default)]
+    pub context: Option<BusinessContext>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,6 +155,63 @@ pub enum PiiPolicy {
     Allow,
     Mask,
     Deny,
+}
+
+// --- Business Context types (4 kinds: Policy, Term, AgentRole, Schema) ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BusinessContext {
+    #[serde(default)]
+    pub terms: Vec<Term>,
+    #[serde(default)]
+    pub agent_roles: Vec<AgentRole>,
+    #[serde(default)]
+    pub schemas: Vec<SchemaDefinition>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Term {
+    pub name: String,
+    pub definition: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default)]
+    pub constraints: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRole {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub allowed_actions: Vec<String>,
+    #[serde(default)]
+    pub denied_actions: Vec<String>,
+    #[serde(default)]
+    pub max_budget: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaDefinition {
+    pub table: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub columns: Vec<ColumnDef>,
+    #[serde(default)]
+    pub pii_columns: Vec<String>,
+    #[serde(default)]
+    pub classification: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColumnDef {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub col_type: String,
+    #[serde(default)]
+    pub pii: bool,
 }
 
 // --- Evaluation types ---

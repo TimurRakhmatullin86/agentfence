@@ -1,3 +1,4 @@
+use crate::sql_checker;
 use crate::types::*;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
@@ -83,10 +84,10 @@ impl PolicyEngine {
 
         if matching.is_empty() {
             return Decision {
-                effect: Effect::Allow,
+                effect: Effect::Deny,
                 policy: "<default>".into(),
                 rule_index: None,
-                reason: "no matching policy found, default allow".into(),
+                reason: "no matching policy — default deny".into(),
                 timestamp: Utc::now(),
                 request_hash: hash_request(request),
             };
@@ -125,6 +126,26 @@ impl PolicyEngine {
                     };
                 }
                 Effect::Allow => {}
+            }
+        }
+
+        // Check SQL content in parameters against data_access policies
+        for (policy, _, _) in &matching {
+            if let Some(data_access) = &policy.spec.data_access {
+                let violations =
+                    sql_checker::check_sql_in_params(&request.parameters, data_access);
+                if !violations.is_empty() {
+                    let reasons: Vec<String> =
+                        violations.iter().map(|v| v.reason.clone()).collect();
+                    return Decision {
+                        effect: Effect::Deny,
+                        policy: policy.metadata.name.clone(),
+                        rule_index: None,
+                        reason: format!("SQL policy violation: {}", reasons.join("; ")),
+                        timestamp: Utc::now(),
+                        request_hash: hash_request(request),
+                    };
+                }
             }
         }
 
@@ -247,11 +268,59 @@ fn condition_met(condition: &Condition, request: &ActionRequest) -> bool {
             }
             true
         }
+        Condition::RecipientDomain { allow, deny } => {
+            let domain = request
+                .parameters
+                .get("recipient")
+                .or_else(|| request.parameters.get("email"))
+                .or_else(|| request.parameters.get("to"))
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.rsplit('@').next());
+            match domain {
+                Some(d) => {
+                    if !deny.is_empty() && deny.iter().any(|blocked| d == blocked) {
+                        return false;
+                    }
+                    if !allow.is_empty() {
+                        return allow.iter().any(|allowed| d == allowed);
+                    }
+                    true
+                }
+                None => allow.is_empty(),
+            }
+        }
+        Condition::TimeWindow {
+            allow_hours,
+            deny_hours,
+        } => {
+            let hour = Utc::now().format("%H").to_string().parse::<u8>().unwrap_or(0);
+            if let Some((start, end)) = deny_hours {
+                if *start <= *end {
+                    if hour >= *start && hour < *end {
+                        return false;
+                    }
+                } else if hour >= *start || hour < *end {
+                    return false;
+                }
+            }
+            if let Some((start, end)) = allow_hours {
+                if *start <= *end {
+                    return hour >= *start && hour < *end;
+                }
+                return hour >= *start || hour < *end;
+            }
+            true
+        }
+        Condition::RateLimit { .. } => {
+            // Rate limiting requires persistent state tracking (not yet implemented).
+            // Fail-closed: deny when rate limit is configured but cannot be enforced.
+            false
+        }
         Condition::FieldMatch {
             field,
             equals,
             contains,
-            regex: _,
+            regex: regex_pat,
         } => {
             if let Some(val) = request.parameters.get(field) {
                 if let Some(s) = val.as_str() {
@@ -261,11 +330,21 @@ fn condition_met(condition: &Condition, request: &ActionRequest) -> bool {
                     if let Some(cont) = contains {
                         return s.contains(cont.as_str());
                     }
+                    if let Some(pat) = regex_pat {
+                        if let Ok(re) = regex::Regex::new(pat) {
+                            return re.is_match(s);
+                        }
+                        return false;
+                    }
                 }
             }
             true
         }
-        _ => true,
+        Condition::Custom { .. } => {
+            // Custom expressions cannot be safely evaluated.
+            // Fail-closed: deny when custom condition is present.
+            false
+        }
     }
 }
 
@@ -410,7 +489,7 @@ spec:
     }
 
     #[test]
-    fn test_no_matching_policy() {
+    fn test_no_matching_policy_denies() {
         let mut engine = PolicyEngine::new();
         engine.load_string(sample_policy_yaml()).unwrap();
 
@@ -422,7 +501,7 @@ spec:
             cost: None,
         };
         let decision = engine.evaluate(&request);
-        assert!(matches!(decision.effect, Effect::Allow));
+        assert!(matches!(decision.effect, Effect::Deny));
         assert_eq!(decision.policy, "<default>");
     }
 
@@ -442,8 +521,96 @@ spec:
             cost: None,
         };
         let decision = engine.evaluate(&request);
-        // amount > 500 fails the AmountMax condition on rule 0,
-        // so it falls through to rule 1 which is deny
         assert!(matches!(decision.effect, Effect::Deny));
+    }
+
+    fn sql_policy_yaml() -> &'static str {
+        r#"
+apiVersion: agentfence/v1
+kind: Policy
+metadata:
+  name: sql-aware-policy
+spec:
+  agent:
+    name: data-agent
+  rules:
+    - action: "query.*"
+      effect: allow
+    - action: "sql.*"
+      effect: allow
+  data_access:
+    pii: deny
+    allowed_tables: [orders, products, faq]
+    denied_tables: [users_private, payments_raw]
+    denied_fields: [ssn, credit_card]
+  "#
+    }
+
+    #[test]
+    fn test_sql_denied_table_in_param() {
+        let mut engine = PolicyEngine::new();
+        engine.load_string(sql_policy_yaml()).unwrap();
+
+        let mut params = HashMap::new();
+        params.insert(
+            "query".into(),
+            serde_json::json!("SELECT * FROM users_private"),
+        );
+
+        let request = ActionRequest {
+            agent: "data-agent".into(),
+            action: "query.execute".into(),
+            parameters: params,
+            session_id: None,
+            cost: None,
+        };
+        let decision = engine.evaluate(&request);
+        assert!(matches!(decision.effect, Effect::Deny));
+        assert!(decision.reason.contains("SQL policy violation"));
+    }
+
+    #[test]
+    fn test_sql_allowed_table_passes() {
+        let mut engine = PolicyEngine::new();
+        engine.load_string(sql_policy_yaml()).unwrap();
+
+        let mut params = HashMap::new();
+        params.insert(
+            "query".into(),
+            serde_json::json!("SELECT id, name FROM orders WHERE id = 1"),
+        );
+
+        let request = ActionRequest {
+            agent: "data-agent".into(),
+            action: "query.execute".into(),
+            parameters: params,
+            session_id: None,
+            cost: None,
+        };
+        let decision = engine.evaluate(&request);
+        assert!(matches!(decision.effect, Effect::Allow));
+    }
+
+    #[test]
+    fn test_sql_join_with_denied_table() {
+        let mut engine = PolicyEngine::new();
+        engine.load_string(sql_policy_yaml()).unwrap();
+
+        let mut params = HashMap::new();
+        params.insert(
+            "sql".into(),
+            serde_json::json!("SELECT o.id FROM orders o JOIN payments_raw p ON o.id = p.order_id"),
+        );
+
+        let request = ActionRequest {
+            agent: "data-agent".into(),
+            action: "sql.execute".into(),
+            parameters: params,
+            session_id: None,
+            cost: None,
+        };
+        let decision = engine.evaluate(&request);
+        assert!(matches!(decision.effect, Effect::Deny));
+        assert!(decision.reason.contains("payments_raw"));
     }
 }

@@ -1,32 +1,26 @@
 # agentfence
 
-**Business governance layer for AI agents** — budget limits, approval rules, RBAC, and audit trail.
+**Rulebook for AI agents** — default-deny policies, SQL-aware enforcement, budget limits, approval chains, and MCP proxy mode.
 
 ```
 $ agentfence check -p policy.yaml -a support-bot -A database_write
 DENY
   policy: support-bot-policy
-  rule:   #6
+  rule:   #2
   reason: Direct database writes are prohibited
 ```
 
 ## The Problem
 
-AI agents can now browse the web, execute code, send emails, process refunds, and access databases. But **who decides what an agent is allowed to do?**
+AI agents can browse the web, execute code, send emails, process refunds, and run SQL queries. But **who decides what an agent is allowed to do — and what data it can touch?**
 
 Existing tools solve adjacent problems:
-- **NeMo Guardrails** → prompt safety (what the LLM says)
+- **NeMo Guardrails / Model Armor** → prompt safety (what the LLM says)
 - **Guardrails AI** → output validation (schema, PII, toxicity)
-- **FailproofAI** → dev tool blocking (file system, shell)
+- **Microsoft AGT** → agent orchestration with governance primitives
+- **AWS AgentCore Policy** → Cedar-based agent policies (cloud-locked)
 
-**None of them** handle business governance:
-- Budget per agent/customer/session
-- Approval chains (refund > $500 → manager approval)
-- Role-based access control per agent
-- Action-level allow/deny with conditions
-- Compliance audit trail
-
-agentfence fills this gap.
+**agentfence** is different: it's an open-source, vendor-neutral **policy engine + MCP proxy** that inspects what agents *do*, not what they *say*. It parses SQL inside tool call arguments, enforces table/field deny-lists, and applies budget and approval rules — all in a single binary.
 
 ## Install
 
@@ -54,7 +48,7 @@ vim .agentfence/default.yaml
 # Validate your policies
 agentfence validate
 
-# Check an action
+# Check an action (default-deny: unknown actions are blocked)
 agentfence check -a my-agent -A send_email
 ```
 
@@ -74,11 +68,9 @@ spec:
     name: support-bot
     role: customer-support
   rules:
-    # Allow read operations
     - action: "search.*"
       effect: allow
 
-    # Refunds under $500 need approval
     - action: refund
       effect: require_approval
       conditions:
@@ -90,7 +82,6 @@ spec:
         timeout_secs: 300
         on_timeout: deny
 
-    # Block destructive operations
     - action: database_write
       effect: deny
       reason: "Direct database writes are prohibited"
@@ -101,96 +92,108 @@ spec:
     alert_at_percent: 80
 
   data_access:
-    pii: mask
+    pii: deny
     allowed_tables: [orders, products, faq]
     denied_tables: [users_private, payments_raw]
+    denied_fields: [ssn, credit_card]
+
+  context:
+    terms:
+      - name: churn
+        definition: "Customer who cancelled in the last 30 days"
+        aliases: [churned, attrition]
+        constraints: ["Only count confirmed cancellations"]
+    schemas:
+      - table: orders
+        pii_columns: [customer_email, phone]
+        classification: internal
 ```
+
+## SQL-Aware Enforcement
+
+agentfence parses SQL inside tool call arguments (via `sqlparser`) and checks every table and field against your `data_access` policy:
+
+```bash
+# Agent tries: SELECT * FROM users_private
+$ agentfence check -a data-agent -A query.execute \
+    -P query="SELECT * FROM users_private"
+DENY
+  policy: data-policy
+  reason: SQL policy violation: table 'users_private' is in denied_tables
+
+# Agent tries a sneaky JOIN
+$ agentfence check -a data-agent -A sql.run \
+    -P sql="SELECT o.id FROM orders o JOIN payments_raw p ON o.id = p.id"
+DENY
+  reason: SQL policy violation: table 'payments_raw' is in denied_tables
+```
+
+This catches queries that would pass a simple tool-name check: the tool is `query.execute` (allowed), but the SQL *content* references blocked tables.
 
 ## CLI Commands
 
 ### `agentfence init [dir]`
-
 Create a policy directory with a starter template.
 
 ### `agentfence validate [path]`
-
 Validate policy files for syntax and schema errors.
 
-```bash
-$ agentfence validate .agentfence
-ok: 2 policies validated successfully
-  support-bot-policy — 8 rules, budget: yes, data_access: yes
-  coding-agent-policy — 7 rules, budget: yes, data_access: no
-```
-
 ### `agentfence check`
-
-Evaluate an action against loaded policies. Returns exit code 0 (allow), 1 (deny), or 2 (require approval).
+Evaluate an action against loaded policies. Exit code 0 (allow), 1 (deny), 2 (require approval).
 
 ```bash
-# Simple check
 agentfence check -a support-bot -A database_write
-
-# With parameters
 agentfence check -a support-bot -A refund -P amount=200
-
-# With cost tracking
 agentfence check -a support-bot -A search.orders --cost 4.50
-
-# JSON output for programmatic use
 agentfence check -a support-bot -A refund -P amount=200 --json
 ```
 
 ### `agentfence list [path]`
-
 Show a summary of all loaded policies.
 
 ### `agentfence serve [-c config]`
-
-Run as MCP proxy server (stdio transport). Reads `agentfence.yaml` by default.
-
-```bash
-# Start proxy with default config
-agentfence serve
-
-# Start with custom config
-agentfence serve -c my-config.yaml
-```
+Run as MCP proxy server (stdio transport).
 
 ## Features
 
-| Feature | agentfence | NeMo | Guardrails AI | FailproofAI | permit0 |
-|---------|-----------|------|---------------|-------------|---------|
-| Budget limits | **yes** | no | no | no | no |
+| Feature | agentfence | Microsoft AGT | AWS AgentCore | NeMo Guardrails | Model Armor |
+|---------|-----------|--------------|---------------|-----------------|-------------|
+| Default-deny | **yes** | no | yes (Cedar) | n/a | n/a |
+| Budget limits | **yes** | no | yes (Dogwood) | no | no |
 | Approval chains | **yes** | no | no | no | no |
-| RBAC per agent | **yes** | no | no | partial | partial |
-| Action conditions | **yes** | no | no | yes | yes |
-| Declarative YAML | **yes** | Colang | Python | TypeScript | YAML |
-| Audit trail | **yes** | no | no | yes | no |
-| Prompt safety | no | **yes** | partial | no | no |
-| Output validation | no | partial | **yes** | no | no |
-| Data access control | **yes** | no | no | partial | no |
+| SQL content parsing | **yes** | no | no | no | no |
 | MCP proxy mode | **yes** | no | no | no | no |
+| Declarative YAML | **yes** | Python | Cedar | Colang | API |
+| Vendor-neutral | **yes** | Azure | AWS | any | GCP |
+| Prompt safety | no | no | no | **yes** | **yes** |
+| Output validation | no | no | no | partial | **yes** |
+| Open-source | **Apache-2.0** | **MIT** | no | **Apache-2.0** | no |
 
 ## How It Works
 
-1. **Define policies** as YAML files (one per agent or team)
-2. **agentfence evaluates** each action request against matching policies
-3. **Three outcomes**: `ALLOW` (proceed), `DENY` (block), `REQUIRE_APPROVAL` (escalate)
-4. **Exit codes** enable CI/CD integration (0, 1, 2)
-5. **JSON output** for programmatic integration with agent frameworks
+```
+┌─────────────────────────────────────────────────────┐
+│  Agent (Claude, Cursor, custom)                     │
+│  "SELECT * FROM users_private WHERE id = 42"        │
+└─────────────────────┬───────────────────────────────┘
+                      │ tool call
+┌─────────────────────▼───────────────────────────────┐
+│  agentfence (MCP proxy)                             │
+│  1. Match agent → policy                            │
+│  2. Match action → rules                            │
+│  3. Parse SQL in arguments → check tables/fields    │
+│  4. Check budget limits                             │
+│  5. DENY / ALLOW / REQUIRE_APPROVAL                 │
+└─────────────────────┬───────────────────────────────┘
+                      │ if ALLOW
+┌─────────────────────▼───────────────────────────────┐
+│  Downstream MCP server (postgres, filesystem, etc)  │
+└─────────────────────────────────────────────────────┘
+```
 
 ## MCP Proxy Mode
 
-agentfence can run as an MCP server that sits between Claude (or any MCP client) and your tool servers. Every tool call passes through the policy engine before reaching the downstream server.
-
-```
-Claude/Cursor ←→ agentfence (MCP proxy) ←→ MCP tool servers
-```
-
-### Setup
-
-1. Create a proxy config:
+agentfence sits between your MCP client and downstream tool servers:
 
 ```yaml
 # agentfence.yaml
@@ -210,7 +213,7 @@ servers:
       GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_..."
 ```
 
-2. Add to Claude Desktop (`claude_desktop_config.json`):
+Add to Claude Desktop:
 
 ```json
 {
@@ -223,27 +226,11 @@ servers:
 }
 ```
 
-3. Claude now sees all downstream tools, but every call is policy-checked:
-   - **ALLOW** → proxied to downstream server
-   - **DENY** → blocked, agent sees error with reason
-   - **REQUIRE_APPROVAL** → blocked, agent sees approval requirement
-
-### Built-in Meta-tool
-
-The proxy exposes `agentfence_status` — agents can check their governance status:
-- Loaded policies count
-- Connected downstream servers
-- Total proxied tools
-
 ## CI/CD Integration
 
-Use agentfence as a policy gate in your agent deployment pipeline:
-
 ```bash
-# Validate policies before deploy
 agentfence validate .agentfence || exit 1
 
-# Runtime: check before executing agent action
 RESULT=$(agentfence check -a $AGENT -A $ACTION --json)
 EFFECT=$(echo $RESULT | jq -r .effect)
 
@@ -256,13 +243,15 @@ esac
 
 ## Roadmap
 
-- [x] MCP server mode (middleware between agent and tools)
-- [ ] Rate limiting enforcement
+- [x] MCP proxy mode (middleware between agent and tools)
+- [x] Default-deny policy engine
+- [x] SQL-aware enforcement (table/field/PII checks)
+- [x] Business context (terms, agent roles, schema metadata)
 - [ ] Persistent audit log (SQLite)
 - [ ] Real-time budget tracking across sessions
+- [ ] Approval channel (Slack/webhook integration)
+- [ ] Briefing resource (`agentfence://briefing/{agent}`)
 - [ ] OPA policy import
-- [ ] SDK for Python/TypeScript agent frameworks
-- [ ] Web dashboard
 
 ## License
 
