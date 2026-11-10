@@ -63,9 +63,26 @@ impl PolicyEngine {
     }
 
     fn validate_policy(&self, policy: &Policy) -> Result<(), EngineError> {
+        if policy.api_version != "agentfence/v1" {
+            return Err(EngineError::Validation(format!(
+                "unsupported apiVersion '{}', expected 'agentfence/v1'",
+                policy.api_version
+            )));
+        }
+        if policy.kind != "Policy" {
+            return Err(EngineError::Validation(format!(
+                "unsupported kind '{}', expected 'Policy'",
+                policy.kind
+            )));
+        }
         if policy.metadata.name.is_empty() {
             return Err(EngineError::Validation(
                 "policy metadata.name is required".into(),
+            ));
+        }
+        if policy.metadata.name.contains(' ') {
+            return Err(EngineError::Validation(
+                "policy metadata.name must not contain spaces".into(),
             ));
         }
         if policy.spec.rules.is_empty()
@@ -75,6 +92,62 @@ impl PolicyEngine {
             return Err(EngineError::Validation(
                 "policy must have at least one rule, budget, or data_access section".into(),
             ));
+        }
+        for (i, rule) in policy.spec.rules.iter().enumerate() {
+            if rule.action.is_empty() {
+                return Err(EngineError::Validation(format!(
+                    "rule #{} has empty action",
+                    i
+                )));
+            }
+            if rule.action.starts_with("regex:") {
+                let pattern = &rule.action["regex:".len()..];
+                if regex::Regex::new(pattern).is_err() {
+                    return Err(EngineError::Validation(format!(
+                        "rule #{} has invalid regex pattern: {}",
+                        i, pattern
+                    )));
+                }
+            }
+            if matches!(rule.effect, Effect::RequireApproval) && rule.approval.is_none() {
+                return Err(EngineError::Validation(format!(
+                    "rule #{} has effect require_approval but no approval section",
+                    i
+                )));
+            }
+        }
+        if let Some(budget) = &policy.spec.budget {
+            if let (Some(session), Some(day)) = (budget.max_per_session, budget.max_per_day) {
+                if session > day {
+                    return Err(EngineError::Validation(
+                        "budget: max_per_session cannot exceed max_per_day".into(),
+                    ));
+                }
+            }
+            if let (Some(day), Some(month)) = (budget.max_per_day, budget.max_per_month) {
+                if day > month {
+                    return Err(EngineError::Validation(
+                        "budget: max_per_day cannot exceed max_per_month".into(),
+                    ));
+                }
+            }
+            if let Some(pct) = budget.alert_at_percent {
+                if pct > 100 {
+                    return Err(EngineError::Validation(
+                        "budget: alert_at_percent must be 0-100".into(),
+                    ));
+                }
+            }
+        }
+        if let Some(data) = &policy.spec.data_access {
+            for table in &data.denied_tables {
+                if data.allowed_tables.contains(table) {
+                    return Err(EngineError::Validation(format!(
+                        "table '{}' is in both allowed_tables and denied_tables",
+                        table
+                    )));
+                }
+            }
         }
         Ok(())
     }
@@ -240,6 +313,15 @@ fn rule_matches(rule: &Rule, request: &ActionRequest) -> bool {
         let prefix = &rule.action[..rule.action.len() - 2];
         if request.action.starts_with(prefix) {
             return conditions_met(&rule.conditions, request);
+        }
+    }
+
+    if rule.action.starts_with("regex:") {
+        let pattern = &rule.action["regex:".len()..];
+        if let Ok(re) = regex::Regex::new(pattern) {
+            if re.is_match(&request.action) {
+                return conditions_met(&rule.conditions, request);
+            }
         }
     }
 
@@ -612,5 +694,141 @@ spec:
         let decision = engine.evaluate(&request);
         assert!(matches!(decision.effect, Effect::Deny));
         assert!(decision.reason.contains("payments_raw"));
+    }
+
+    #[test]
+    fn test_regex_action_matching() {
+        let mut engine = PolicyEngine::new();
+        engine
+            .load_string(
+                r#"
+apiVersion: agentfence/v1
+kind: Policy
+metadata:
+  name: regex-test
+spec:
+  agent:
+    name: my-agent
+  rules:
+    - action: "regex:^(read|get|list)_.*"
+      effect: allow
+    - action: "regex:^(delete|drop|truncate)_.*"
+      effect: deny
+      reason: "Destructive operations blocked"
+"#,
+            )
+            .unwrap();
+
+        let req_read = ActionRequest {
+            agent: "my-agent".into(),
+            action: "read_orders".into(),
+            parameters: HashMap::new(),
+            session_id: None,
+            cost: None,
+        };
+        assert!(matches!(engine.evaluate(&req_read).effect, Effect::Allow));
+
+        let req_delete = ActionRequest {
+            agent: "my-agent".into(),
+            action: "delete_users".into(),
+            parameters: HashMap::new(),
+            session_id: None,
+            cost: None,
+        };
+        assert!(matches!(
+            engine.evaluate(&req_delete).effect,
+            Effect::Deny
+        ));
+    }
+
+    #[test]
+    fn test_validation_bad_api_version() {
+        let mut engine = PolicyEngine::new();
+        let result = engine.load_string(
+            r#"
+apiVersion: agentfence/v99
+kind: Policy
+metadata:
+  name: bad
+spec:
+  rules:
+    - action: test
+      effect: allow
+"#,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("apiVersion"));
+    }
+
+    #[test]
+    fn test_validation_budget_session_exceeds_day() {
+        let mut engine = PolicyEngine::new();
+        let result = engine.load_string(
+            r#"
+apiVersion: agentfence/v1
+kind: Policy
+metadata:
+  name: bad-budget
+spec:
+  rules:
+    - action: test
+      effect: allow
+  budget:
+    max_per_session: 100.0
+    max_per_day: 50.0
+"#,
+        );
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("max_per_session cannot exceed"));
+    }
+
+    #[test]
+    fn test_validation_table_in_both_lists() {
+        let mut engine = PolicyEngine::new();
+        let result = engine.load_string(
+            r#"
+apiVersion: agentfence/v1
+kind: Policy
+metadata:
+  name: conflict-tables
+spec:
+  rules:
+    - action: test
+      effect: allow
+  data_access:
+    allowed_tables: [orders, secrets]
+    denied_tables: [secrets]
+"#,
+        );
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("both allowed_tables and denied_tables"));
+    }
+
+    #[test]
+    fn test_validation_approval_missing() {
+        let mut engine = PolicyEngine::new();
+        let result = engine.load_string(
+            r#"
+apiVersion: agentfence/v1
+kind: Policy
+metadata:
+  name: missing-approval
+spec:
+  rules:
+    - action: send_email
+      effect: require_approval
+"#,
+        );
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("no approval section"));
     }
 }

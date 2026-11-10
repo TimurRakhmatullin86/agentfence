@@ -1,3 +1,5 @@
+mod audit;
+mod briefing;
 mod engine;
 mod mcp_server;
 mod mcp_types;
@@ -15,7 +17,7 @@ use types::*;
 #[command(
     name = "agentfence",
     version,
-    about = "Business governance layer for AI agents — budget limits, approval rules, RBAC, and audit trail"
+    about = "Rulebook for AI agents — default-deny policies, SQL-aware enforcement, budget limits, and MCP proxy"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -62,6 +64,27 @@ enum Commands {
         /// Policy file or directory
         #[arg(default_value = ".agentfence")]
         path: PathBuf,
+    },
+    /// Show what an agent can and cannot do
+    Explain {
+        /// Policy file or directory
+        #[arg(short, long, default_value = ".agentfence")]
+        policy: PathBuf,
+        /// Agent name
+        #[arg(short, long)]
+        agent: String,
+    },
+    /// Show recent audit log entries
+    Audit {
+        /// Audit database path
+        #[arg(short, long, default_value = "agentfence-audit.db")]
+        db: PathBuf,
+        /// Number of entries to show
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+        /// Filter by agent name
+        #[arg(short, long)]
+        agent: Option<String>,
     },
     /// Run as MCP proxy server (stdio transport)
     Serve {
@@ -127,6 +150,8 @@ async fn main() {
             json,
         } => cmd_check(&policy, &agent, &action, cost, param, json),
         Commands::List { path } => cmd_list(&path),
+        Commands::Explain { policy, agent } => cmd_explain(&policy, &agent),
+        Commands::Audit { db, limit, agent } => cmd_audit(&db, limit, agent.as_deref()),
         Commands::Serve { config } => cmd_serve(&config).await,
     }
 }
@@ -345,5 +370,77 @@ fn cmd_list(path: &PathBuf) {
             }
         }
         println!();
+    }
+}
+
+fn cmd_explain(policy_path: &PathBuf, agent: &str) {
+    let engine = match load_engine(policy_path) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("{} {}", "error:".red(), e);
+            std::process::exit(1);
+        }
+    };
+
+    let brief = briefing::generate_briefing(&engine, agent);
+    println!("{}", brief);
+}
+
+fn cmd_audit(db_path: &PathBuf, limit: usize, agent_filter: Option<&str>) {
+    let log = match audit::AuditLog::open(db_path.as_path()) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("{} failed to open audit db: {}", "error:".red(), e);
+            std::process::exit(1);
+        }
+    };
+
+    if let Some(agent) = agent_filter {
+        let stats = log.agent_stats(agent);
+        println!("{}", format!("Agent: {}", agent).cyan().bold());
+        println!(
+            "  Total actions: {}  (allowed: {}, denied: {})",
+            stats.total_actions,
+            stats.allowed.to_string().green(),
+            stats.denied.to_string().red()
+        );
+        println!("  Total cost:    ${:.2}", stats.total_cost);
+        println!();
+    }
+
+    let rows = log.recent_decisions(limit);
+    if rows.is_empty() {
+        println!("No audit entries found.");
+        return;
+    }
+
+    println!(
+        "{:<20} {:<15} {:<20} {:<8} {}",
+        "TIMESTAMP".dimmed(),
+        "AGENT".dimmed(),
+        "ACTION".dimmed(),
+        "EFFECT".dimmed(),
+        "REASON".dimmed()
+    );
+    for row in &rows {
+        let effect_colored = match row.effect.as_str() {
+            "allow" => "ALLOW".green(),
+            "deny" => "DENY".red(),
+            "require_approval" => "APPROVAL".yellow(),
+            _ => row.effect.normal(),
+        };
+        let ts = if row.timestamp.len() > 19 {
+            &row.timestamp[..19]
+        } else {
+            &row.timestamp
+        };
+        let cost_str = row
+            .cost
+            .map(|c| format!(" (${:.2})", c))
+            .unwrap_or_default();
+        println!(
+            "{:<20} {:<15} {:<20} {:<8} {}{}",
+            ts, row.agent, row.action, effect_colored, row.reason, cost_str
+        );
     }
 }

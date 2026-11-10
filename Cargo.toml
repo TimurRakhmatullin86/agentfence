@@ -1,9 +1,9 @@
 [package]
 name = "agentfence"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Timur Rakhmatullin <timur.rakhmatullin86@gmail.com>"]
-description = "Business governance layer for AI agents — budget limits, approval rules, RBAC, and audit trail"
+description = "Rulebook for AI agents — default-deny policies, SQL-aware enforcement, budget limits, and MCP proxy"
 license = "Apache-2.0"
 repository = "https://github.com/TimurRakhmatullin86/agentfence"
 homepage = "https://github.com/TimurRakhmatullin86/agentfence"
@@ -24,4 +24,5 @@ colored = "2.0"
 sha2 = "0.10"
 regex = "1.10"
 sqlparser = "0.53"
+rusqlite = { version = "0.31", features = ["bundled"] }
 tokio = { version = "1.0", features = ["full"] }
