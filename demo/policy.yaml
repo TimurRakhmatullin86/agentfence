@@ -1,0 +1,29 @@
+apiVersion: agentfence/v1
+kind: Policy
+metadata:
+  name: analytics-agent-policy
+  description: Policy for AI analytics agent — read-only access to safe tables
+spec:
+  agent:
+    name: analytics-bot
+    role: data-analyst
+  rules:
+    - action: "regex:^(query|read|select).*"
+      effect: allow
+    - action: "regex:^(delete|drop|truncate|alter).*"
+      effect: deny
+      reason: "Destructive operations are forbidden"
+    - action: export_data
+      effect: require_approval
+      approval:
+        approver: data-owner
+        timeout_secs: 300
+  budget:
+    max_per_session: 10.00
+    max_per_day: 100.00
+    alert_at_percent: 80
+  data_access:
+    pii: deny
+    allowed_tables: [orders, products, analytics, sessions]
+    denied_tables: [users_pii, payment_cards, auth_tokens]
+    denied_fields: [ssn, credit_card_number, password_hash, api_key]
