@@ -1,10 +1,11 @@
 use crate::types::DataAccessPolicy;
+use sqlparser::ast::{Expr, Select, SelectItem, SetExpr, Statement, TableFactor};
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
-use sqlparser::ast::{Statement, SetExpr, TableFactor, Select, SelectItem, Expr};
 
 #[derive(Debug)]
 pub struct SqlViolation {
+    #[allow(dead_code)]
     pub table: String,
     pub reason: String,
 }
@@ -15,7 +16,7 @@ pub fn check_sql_in_params(
 ) -> Vec<SqlViolation> {
     let mut violations = Vec::new();
 
-    for (_key, value) in params {
+    for value in params.values() {
         if let Some(sql) = value.as_str() {
             if looks_like_sql(sql) {
                 violations.extend(check_sql(sql, policy));
@@ -256,10 +257,7 @@ mod tests {
     #[test]
     fn test_insert_denied() {
         let policy = test_policy();
-        let violations = check_sql(
-            "INSERT INTO users_private (name) VALUES ('test')",
-            &policy,
-        );
+        let violations = check_sql("INSERT INTO users_private (name) VALUES ('test')", &policy);
         assert!(violations.iter().any(|v| v.table == "users_private"));
     }
 

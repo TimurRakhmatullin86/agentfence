@@ -10,7 +10,7 @@ mod types;
 use clap::{Parser, Subcommand};
 use colored::*;
 use engine::{EngineError, PolicyEngine};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use types::*;
 
 #[derive(Parser)]
@@ -112,7 +112,7 @@ fn parse_param(s: &str) -> Result<(String, serde_json::Value), String> {
     Ok((key, val))
 }
 
-fn load_engine(path: &PathBuf) -> Result<PolicyEngine, EngineError> {
+fn load_engine(path: &Path) -> Result<PolicyEngine, EngineError> {
     let mut engine = PolicyEngine::new();
     if path.is_file() {
         engine.load_file(path)?;
@@ -200,10 +200,13 @@ spec:
         "done:".green(),
         dir.display()
     );
-    println!("  Edit {}/default.yaml to configure your agent governance rules", dir.display());
+    println!(
+        "  Edit {}/default.yaml to configure your agent governance rules",
+        dir.display()
+    );
 }
 
-fn cmd_validate(path: &PathBuf) {
+fn cmd_validate(path: &Path) {
     match load_engine(path) {
         Ok(engine) => {
             let count = engine.policies().len();
@@ -218,11 +221,7 @@ fn cmd_validate(path: &PathBuf) {
                     "  {} — {} rules, budget: {}, data_access: {}",
                     p.metadata.name.cyan(),
                     p.spec.rules.len(),
-                    if p.spec.budget.is_some() {
-                        "yes"
-                    } else {
-                        "no"
-                    },
+                    if p.spec.budget.is_some() { "yes" } else { "no" },
                     if p.spec.data_access.is_some() {
                         "yes"
                     } else {
@@ -239,7 +238,7 @@ fn cmd_validate(path: &PathBuf) {
 }
 
 fn cmd_check(
-    policy_path: &PathBuf,
+    policy_path: &Path,
     agent: &str,
     action: &str,
     cost: Option<f64>,
@@ -287,7 +286,7 @@ fn cmd_check(
     }
 }
 
-async fn cmd_serve(config_path: &PathBuf) {
+async fn cmd_serve(config_path: &Path) {
     let config = match proxy_config::ProxyConfig::load(config_path) {
         Ok(c) => c,
         Err(e) => {
@@ -318,7 +317,7 @@ async fn cmd_serve(config_path: &PathBuf) {
     }
 }
 
-fn cmd_list(path: &PathBuf) {
+fn cmd_list(path: &Path) {
     let engine = match load_engine(path) {
         Ok(e) => e,
         Err(e) => {
@@ -373,7 +372,7 @@ fn cmd_list(path: &PathBuf) {
     }
 }
 
-fn cmd_explain(policy_path: &PathBuf, agent: &str) {
+fn cmd_explain(policy_path: &Path, agent: &str) {
     let engine = match load_engine(policy_path) {
         Ok(e) => e,
         Err(e) => {
@@ -386,8 +385,8 @@ fn cmd_explain(policy_path: &PathBuf, agent: &str) {
     println!("{}", brief);
 }
 
-fn cmd_audit(db_path: &PathBuf, limit: usize, agent_filter: Option<&str>) {
-    let log = match audit::AuditLog::open(db_path.as_path()) {
+fn cmd_audit(db_path: &Path, limit: usize, agent_filter: Option<&str>) {
+    let log = match audit::AuditLog::open(db_path) {
         Ok(l) => l,
         Err(e) => {
             eprintln!("{} failed to open audit db: {}", "error:".red(), e);

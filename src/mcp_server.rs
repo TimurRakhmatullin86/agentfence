@@ -71,10 +71,7 @@ impl McpProxyServer {
         for ds in &downstream_servers {
             let mut state = ds.lock().await;
             if let Err(e) = initialize_downstream(&mut state).await {
-                eprintln!(
-                    "agentfence: failed to initialize '{}': {}",
-                    state.name, e
-                );
+                eprintln!("agentfence: failed to initialize '{}': {}", state.name, e);
             }
         }
 
@@ -122,11 +119,7 @@ impl McpProxyServer {
             let request: JsonRpcRequest = match serde_json::from_str(trimmed) {
                 Ok(r) => r,
                 Err(e) => {
-                    let resp = JsonRpcResponse::error(
-                        None,
-                        -32700,
-                        format!("parse error: {}", e),
-                    );
+                    let resp = JsonRpcResponse::error(None, -32700, format!("parse error: {}", e));
                     let out = serde_json::to_string(&resp)? + "\n";
                     stdout.write_all(out.as_bytes()).await?;
                     stdout.flush().await?;
@@ -148,10 +141,7 @@ impl McpProxyServer {
                             version: env!("CARGO_PKG_VERSION").into(),
                         },
                     };
-                    JsonRpcResponse::success(
-                        request.id,
-                        serde_json::to_value(result)?,
-                    )
+                    JsonRpcResponse::success(request.id, serde_json::to_value(result)?)
                 }
                 "notifications/initialized" => {
                     continue;
@@ -160,20 +150,13 @@ impl McpProxyServer {
                     let result = ToolsListResult {
                         tools: all_tools.clone(),
                     };
-                    JsonRpcResponse::success(
-                        request.id,
-                        serde_json::to_value(result)?,
-                    )
+                    JsonRpcResponse::success(request.id, serde_json::to_value(result)?)
                 }
                 "tools/call" => {
                     let params: CallToolParams = match request.params {
                         Some(p) => serde_json::from_value(p)?,
                         None => {
-                            JsonRpcResponse::error(
-                                request.id,
-                                -32602,
-                                "missing params".into(),
-                            );
+                            JsonRpcResponse::error(request.id, -32602, "missing params".into());
                             continue;
                         }
                     };
@@ -190,10 +173,7 @@ impl McpProxyServer {
                             content: vec![ToolContent::Text { text: status }],
                             is_error: false,
                         };
-                        JsonRpcResponse::success(
-                            request.id,
-                            serde_json::to_value(result)?,
-                        )
+                        JsonRpcResponse::success(request.id, serde_json::to_value(result)?)
                     } else {
                         // Policy check before proxying
                         let action_request = ActionRequest {
@@ -201,9 +181,7 @@ impl McpProxyServer {
                             action: params.name.clone(),
                             parameters: match &params.arguments {
                                 Some(Value::Object(map)) => {
-                                    map.iter()
-                                        .map(|(k, v)| (k.clone(), v.clone()))
-                                        .collect()
+                                    map.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
                                 }
                                 _ => HashMap::new(),
                             },
@@ -224,10 +202,7 @@ impl McpProxyServer {
                                     }],
                                     is_error: true,
                                 };
-                                JsonRpcResponse::success(
-                                    request.id,
-                                    serde_json::to_value(result)?,
-                                )
+                                JsonRpcResponse::success(request.id, serde_json::to_value(result)?)
                             }
                             Effect::RequireApproval => {
                                 let result = CallToolResult {
@@ -239,19 +214,14 @@ impl McpProxyServer {
                                     }],
                                     is_error: true,
                                 };
-                                JsonRpcResponse::success(
-                                    request.id,
-                                    serde_json::to_value(result)?,
-                                )
+                                JsonRpcResponse::success(request.id, serde_json::to_value(result)?)
                             }
                             Effect::Allow => {
                                 // Proxy to downstream
                                 if let Some(&ds_idx) = tool_routing.get(&params.name) {
                                     let mut state = downstream_servers[ds_idx].lock().await;
                                     match proxy_tool_call(&mut state, &params).await {
-                                        Ok(result) => {
-                                            JsonRpcResponse::success(request.id, result)
-                                        }
+                                        Ok(result) => JsonRpcResponse::success(request.id, result),
                                         Err(e) => JsonRpcResponse::error(
                                             request.id,
                                             -32603,
@@ -262,7 +232,10 @@ impl McpProxyServer {
                                     JsonRpcResponse::error(
                                         request.id,
                                         -32601,
-                                        format!("tool '{}' not found in any downstream server", params.name),
+                                        format!(
+                                            "tool '{}' not found in any downstream server",
+                                            params.name
+                                        ),
                                     )
                                 }
                             }

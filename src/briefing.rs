@@ -19,7 +19,10 @@ pub fn generate_briefing(engine: &PolicyEngine, agent_name: &str) -> String {
         .collect();
 
     if matching.is_empty() {
-        lines.push("**WARNING**: No policies match this agent. All actions will be DENIED (default-deny).".into());
+        lines.push(
+            "**WARNING**: No policies match this agent. All actions will be DENIED (default-deny)."
+                .into(),
+        );
         return lines.join("\n");
     }
 

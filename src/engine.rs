@@ -38,23 +38,20 @@ impl PolicyEngine {
         let mut count = 0;
         let pattern = dir.join("**/*.yaml");
         let pattern_str = pattern.to_string_lossy();
-        for entry in glob::glob(&pattern_str).unwrap() {
-            if let Ok(path) = entry {
-                self.load_file(&path)?;
-                count += 1;
-            }
+        for path in glob::glob(&pattern_str).unwrap().flatten() {
+            self.load_file(&path)?;
+            count += 1;
         }
         let pattern_yml = dir.join("**/*.yml");
         let pattern_yml_str = pattern_yml.to_string_lossy();
-        for entry in glob::glob(&pattern_yml_str).unwrap() {
-            if let Ok(path) = entry {
-                self.load_file(&path)?;
-                count += 1;
-            }
+        for path in glob::glob(&pattern_yml_str).unwrap().flatten() {
+            self.load_file(&path)?;
+            count += 1;
         }
         Ok(count)
     }
 
+    #[allow(dead_code)]
     pub fn load_string(&mut self, yaml: &str) -> Result<(), EngineError> {
         let policy: Policy = serde_yaml::from_str(yaml)?;
         self.validate_policy(&policy)?;
@@ -191,9 +188,10 @@ impl PolicyEngine {
                         effect: Effect::RequireApproval,
                         policy: policy.metadata.name.clone(),
                         rule_index: Some(*rule_idx),
-                        reason: rule.reason.clone().unwrap_or_else(|| {
-                            format!("requires approval from {}", approver)
-                        }),
+                        reason: rule
+                            .reason
+                            .clone()
+                            .unwrap_or_else(|| format!("requires approval from {}", approver)),
                         timestamp: Utc::now(),
                         request_hash: hash_request(request),
                     };
@@ -205,8 +203,7 @@ impl PolicyEngine {
         // Check SQL content in parameters against data_access policies
         for (policy, _, _) in &matching {
             if let Some(data_access) = &policy.spec.data_access {
-                let violations =
-                    sql_checker::check_sql_in_params(&request.parameters, data_access);
+                let violations = sql_checker::check_sql_in_params(&request.parameters, data_access);
                 if !violations.is_empty() {
                     let reasons: Vec<String> =
                         violations.iter().map(|v| v.reason.clone()).collect();
@@ -375,7 +372,11 @@ fn condition_met(condition: &Condition, request: &ActionRequest) -> bool {
             allow_hours,
             deny_hours,
         } => {
-            let hour = Utc::now().format("%H").to_string().parse::<u8>().unwrap_or(0);
+            let hour = Utc::now()
+                .format("%H")
+                .to_string()
+                .parse::<u8>()
+                .unwrap_or(0);
             if let Some((start, end)) = deny_hours {
                 if *start <= *end {
                     if hour >= *start && hour < *end {
@@ -735,10 +736,7 @@ spec:
             session_id: None,
             cost: None,
         };
-        assert!(matches!(
-            engine.evaluate(&req_delete).effect,
-            Effect::Deny
-        ));
+        assert!(matches!(engine.evaluate(&req_delete).effect, Effect::Deny));
     }
 
     #[test]

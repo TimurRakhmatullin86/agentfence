@@ -30,6 +30,7 @@ pub struct JsonRpcError {
     pub data: Option<Value>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InitializeParams {
     #[serde(rename = "protocolVersion")]
@@ -39,6 +40,7 @@ pub struct InitializeParams {
     pub client_info: Implementation,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientCapabilities {
     #[serde(default)]

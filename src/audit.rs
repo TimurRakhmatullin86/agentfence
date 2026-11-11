@@ -40,6 +40,7 @@ impl AuditLog {
         Ok(Self { conn })
     }
 
+    #[allow(dead_code)]
     pub fn in_memory() -> Result<Self, rusqlite::Error> {
         let conn = Connection::open_in_memory()?;
         let log = Self { conn };
@@ -70,6 +71,7 @@ impl AuditLog {
         Ok(log)
     }
 
+    #[allow(dead_code)]
     pub fn record(
         &self,
         request: &ActionRequest,
@@ -118,6 +120,7 @@ impl AuditLog {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn session_cost(&self, agent: &str, session_id: &str) -> f64 {
         self.conn
             .query_row(
@@ -128,6 +131,7 @@ impl AuditLog {
             .unwrap_or(0.0)
     }
 
+    #[allow(dead_code)]
     pub fn day_cost(&self, agent: &str, date: &str) -> f64 {
         self.conn
             .query_row(
@@ -138,6 +142,7 @@ impl AuditLog {
             .unwrap_or(0.0)
     }
 
+    #[allow(dead_code)]
     pub fn month_cost(&self, agent: &str, year_month: &str) -> f64 {
         let pattern = format!("{}%", year_month);
         self.conn
@@ -218,11 +223,13 @@ impl AuditLog {
 }
 
 pub struct AuditRow {
+    #[allow(dead_code)]
     pub id: String,
     pub timestamp: String,
     pub agent: String,
     pub action: String,
     pub effect: String,
+    #[allow(dead_code)]
     pub policy: String,
     pub reason: String,
     pub cost: Option<f64>,
