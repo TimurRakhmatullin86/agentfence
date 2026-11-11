@@ -6,13 +6,9 @@
 
 **Rulebook for AI agents** — default-deny policies, SQL-aware enforcement, budget limits, approval chains, and MCP proxy mode. One binary, zero runtime deps.
 
-```
-$ agentfence check -p policy.yaml -a support-bot -A database_write
-DENY
-  policy: support-bot-policy
-  rule:   #2
-  reason: Direct database writes are prohibited
-```
+<p align="center">
+  <img src="demo/agentfence-demo.gif" alt="agentfence demo — SQL-aware policy enforcement" width="800">
+</p>
 
 ## The Problem
 
