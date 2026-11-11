@@ -1,6 +1,10 @@
 # agentfence
 
-**Rulebook for AI agents** — default-deny policies, SQL-aware enforcement, budget limits, approval chains, and MCP proxy mode.
+[![CI](https://github.com/TimurRakhmatullin86/agentfence/actions/workflows/ci.yml/badge.svg)](https://github.com/TimurRakhmatullin86/agentfence/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/agentfence.svg)](https://crates.io/crates/agentfence)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
+**Rulebook for AI agents** — default-deny policies, SQL-aware enforcement, budget limits, approval chains, and MCP proxy mode. One binary, zero runtime deps.
 
 ```
 $ agentfence check -p policy.yaml -a support-bot -A database_write
@@ -151,6 +155,12 @@ agentfence check -a support-bot -A refund -P amount=200 --json
 ### `agentfence list [path]`
 Show a summary of all loaded policies.
 
+### `agentfence explain -a <agent>`
+Generate a human-readable briefing of what the agent can and cannot do, including data access restrictions and business terms.
+
+### `agentfence audit [--limit N]`
+Show recent policy decisions from the SQLite audit log. Includes per-agent stats.
+
 ### `agentfence serve [-c config]`
 Run as MCP proxy server (stdio transport).
 
@@ -243,15 +253,18 @@ esac
 
 ## Roadmap
 
-- [x] MCP proxy mode (middleware between agent and tools)
 - [x] Default-deny policy engine
 - [x] SQL-aware enforcement (table/field/PII checks)
+- [x] MCP proxy mode (middleware between agent and tools)
 - [x] Business context (terms, agent roles, schema metadata)
-- [ ] Persistent audit log (SQLite)
+- [x] SQLite audit log with agent stats
+- [x] Briefing generation (`agentfence explain`)
+- [x] Regex action matching
+- [x] Strict YAML validation
 - [ ] Real-time budget tracking across sessions
 - [ ] Approval channel (Slack/webhook integration)
-- [ ] Briefing resource (`agentfence://briefing/{agent}`)
 - [ ] OPA policy import
+- [ ] Python/TypeScript SDK
 
 ## License
 
